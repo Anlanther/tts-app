@@ -66,6 +66,7 @@ class Orchestrator:
         self.retry_backoff = retry_backoff
         self.on_progress = on_progress
         self.logger = logger
+        self.current_job_id: str | None = None
 
     def run(self, document: SourceDocument, output_path: Path, source_format: str) -> RunResult:
         content_hash = hash_text(document.text)
@@ -104,6 +105,7 @@ class Orchestrator:
         return self._execute(job, output_path)
 
     def _execute(self, job: SynthesisJob, output_path: Path) -> RunResult:
+        self.current_job_id = job.job_id
         temp_dir = Path(job.temp_dir) if job.temp_dir else self._temp_dir_for(job.job_id)
         temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -115,6 +117,8 @@ class Orchestrator:
         was_resumed = bool(completed)
         pending = [i for i in range(len(job.chunks)) if i not in set(completed)]
         job.completed = sorted(completed)
+
+        self._report_start(job, output_path, was_resumed)
 
         if not pending:
             self._log("All chunks present but output missing; re-merging.")
@@ -133,7 +137,7 @@ class Orchestrator:
                 self._synthesize_with_retries(chunk_text, wav_path, job.voice)
             except KeyboardInterrupt:
                 self.store.save(job)
-                self._log("Interrupted; progress saved. Resume with `tts resume <job_id>`.")
+                self._log(f"Interrupted; progress saved. Resume with `tts resume {job.job_id}`.")
                 raise
             except SynthesisError:
                 self.store.save(job)
@@ -178,12 +182,22 @@ class Orchestrator:
         elapsed = time.monotonic() - start
         done = index + 1
         eta = elapsed / done * (total - done) if done else 0.0
-        temp = thermal.read_cpu_temperature() if self.throttle.thermal_aware else None
-        temp_str = f"{temp:.1f}C" if temp is not None else "n/a"
+        thermal_str = (
+            thermal.read_thermal_reading().label() if self.throttle.thermal_aware else "n/a"
+        )
         message = (
             f"chunk {done}/{total} | chars={chars} | "
-            f"elapsed={elapsed:.1f}s | eta={eta:.1f}s | temp={temp_str}"
+            f"elapsed={elapsed:.1f}s | eta={eta:.1f}s | thermal={thermal_str}"
         )
+        self._emit(message)
+
+    def _report_start(self, job: SynthesisJob, output_path: Path, resumed: bool) -> None:
+        self._emit(
+            f"Job {job.job_id} | {job.total} chunks | resumed={resumed} | output -> {output_path}"
+        )
+
+    def _emit(self, message: str) -> None:
+        """Write to the file logger and stream to the console progress channel."""
         self._log(message)
         if self.on_progress is not None:
             self.on_progress(message)

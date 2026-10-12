@@ -74,6 +74,7 @@ def convert(
         thermal_aware=thermal_aware,
         max_runtime=max_runtime,
     )
+    orchestrator: Orchestrator | None = None
     try:
         document = _load_document(input, fmt, pdf_password)
         output_path = output if output is not None else _default_output(input, document)
@@ -82,7 +83,11 @@ def convert(
         result = orchestrator.run(document, output_path, _detect_format(input, fmt))
         _print_result(result)
     except KeyboardInterrupt:
-        typer.echo("Interrupted; progress saved. Resume with `tts resume <job_id>`.")
+        job_id = orchestrator.current_job_id if orchestrator is not None else None
+        if job_id is None:
+            typer.echo("Interrupted.")
+        else:
+            typer.echo(f"Interrupted; progress saved. Resume with `tts resume {job_id}`.")
         raise typer.Exit(130) from None
     except TtsError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -98,7 +103,7 @@ def resume(job_id: str = typer.Argument(..., help="Job id to resume.")) -> None:
         result = orchestrator.resume(job_id)
         _print_result(result)
     except KeyboardInterrupt:
-        typer.echo("Interrupted; progress saved. Resume again with `tts resume <job_id>`.")
+        typer.echo(f"Interrupted; progress saved. Resume again with `tts resume {job_id}`.")
         raise typer.Exit(130) from None
     except TtsError as exc:
         typer.echo(f"Error: {exc}", err=True)

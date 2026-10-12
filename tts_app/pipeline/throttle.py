@@ -46,10 +46,19 @@ class Throttle:
     def _compute_duration(self) -> float:
         duration = self.base_sleep
         if self.thermal_aware:
-            limit = thermal.read_cpu_speed_limit()
-            if limit is not None and limit < self.thermal_threshold:
-                duration += (self.thermal_threshold - limit) / 100.0 * 5.0
+            duration += self._thermal_penalty()
         return duration
+
+    def _thermal_penalty(self) -> float:
+        """Extra cooldown implied by current throttling, or 0.0 when cool/unknown."""
+        limit = thermal.read_cpu_speed_limit()
+        if limit is not None:
+            if limit < self.thermal_threshold:
+                return (self.thermal_threshold - limit) / 100.0 * 5.0
+            return 0.0
+        # No speed limit reported (e.g. Apple Silicon); fall back to the thermal
+        # pressure level exposed by powermetrics.
+        return thermal.pressure_penalty(thermal.read_thermal_reading().pressure)
 
     def _check_runtime(self) -> None:
         if self.max_runtime is None:

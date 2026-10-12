@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,11 @@ def _splitter() -> SentenceSplitter:
 
 
 def _orchestrator(
-    store: JsonJobStore, engine: FakeEngine, tmp_path: Path, retries: int = 0
+    store: JsonJobStore,
+    engine: FakeEngine,
+    tmp_path: Path,
+    retries: int = 0,
+    on_progress: Callable[[str], None] | None = None,
 ) -> Orchestrator:
     return Orchestrator(
         engine=engine,
@@ -43,6 +48,7 @@ def _orchestrator(
         state_dir=tmp_path / "state",
         retries=retries,
         retry_backoff=0.0,
+        on_progress=on_progress,
     )
 
 
@@ -121,6 +127,55 @@ def test_retries_recover_from_transient_failure(tmp_path: Path) -> None:
     document = SourceDocument(title="t", text="One sentence. Two sentence.", page_count=1)
     result = orchestrator.run(document, tmp_path / "out.mp3", "txt")
     assert result.complete
+
+
+def test_run_reports_job_id_in_start_header(tmp_path: Path) -> None:
+    store = JsonJobStore(tmp_path / "jobs")
+    messages: list[str] = []
+    orchestrator = _orchestrator(store, FakeEngine(), tmp_path, on_progress=messages.append)
+    document = SourceDocument(title="t", text=TEXT, page_count=1, warnings=[])
+
+    result = orchestrator.run(document, tmp_path / "out.mp3", "txt")
+
+    assert messages[0].startswith(f"Job {result.job_id} ")
+    assert orchestrator.current_job_id == result.job_id
+
+
+def test_resume_reports_stored_job_id(tmp_path: Path) -> None:
+    chunks = _splitter().split(TEXT)
+    content_hash = hash_text(TEXT)
+    job_id = build_job_id(content_hash, VOICE, CONFIG_HASH)
+    temp_dir = tmp_path / "state" / "tmp" / job_id
+    temp_dir.mkdir(parents=True)
+    write_dummy_wav(temp_dir / "chunk_000000.wav")
+
+    store = JsonJobStore(tmp_path / "jobs")
+    store.save(
+        SynthesisJob(
+            job_id=job_id,
+            content_hash=content_hash,
+            voice=VOICE,
+            config_hash=CONFIG_HASH,
+            source_format="txt",
+            title="t",
+            chunks=chunks,
+            completed=[0],
+            status=JobStatus.RUNNING,
+            output_path=str(tmp_path / "out.mp3"),
+            temp_dir=str(temp_dir),
+            created_at="",
+            updated_at="",
+            warnings=[],
+        )
+    )
+
+    messages: list[str] = []
+    orchestrator = _orchestrator(store, FakeEngine(), tmp_path, on_progress=messages.append)
+    result = orchestrator.resume(job_id)
+
+    assert messages[0].startswith(f"Job {job_id} ")
+    assert "resumed=True" in messages[0]
+    assert result.job_id == job_id
 
 
 def test_exhausted_retries_raises_and_persists(tmp_path: Path) -> None:

@@ -123,8 +123,13 @@ Temp files are cleaned up automatically on success.
 ## Thermal tuning
 
 - `--sleep` (default `2.0s`) inserts a cooldown between chunks.
-- `--thermal-aware` checks `pmset -g therm` before each chunk and lengthens the
-  pause when the CPU speed limit drops (i.e. throttling is detected).
+- `--thermal-aware` lengthens the pause when the machine is thermally loaded.
+  It reads `pmset -g therm` (the CPU speed limit) where available, and otherwise
+  falls back to the thermal pressure level reported by `powermetrics` — which is
+  what Apple Silicon Macs expose, since their `powermetrics` has no SMC sampler.
+  The per-chunk progress line reports whichever signal is available under
+  `thermal=` (a temperature such as `61.2C`, or a pressure level such as
+  `Moderate`).
 - `--max-runtime 2h` caps the total runtime; when hit, progress is persisted and
   the run exits cleanly.
 
