@@ -23,6 +23,7 @@ from tts_app.domain.models import (
 from tts_app.domain.ports import AudioMerger, JobStore, TextSplitter, TTSEngine
 from tts_app.pipeline.throttle import Throttle
 from tts_app.utils import memory, thermal
+from tts_app.utils.memory import format_mib as memformat
 
 
 @dataclass
@@ -177,6 +178,19 @@ class Orchestrator:
         job.updated_at = _now()
         self.store.save(job)
         self._log(f"Done. Output: {output_path}")
+        self._report_peak_memory()
+
+    def _report_peak_memory(self) -> None:
+        """Emit the run's peak memory footprint, if memory reporting is on.
+
+        The per-chunk ``mem=`` line samples the *current* footprint, so it can
+        miss a transient spike. The peak is monotonic and catches it.
+        """
+        if not self.throttle.memory_aware:
+            return
+        reading = memory.read_memory_reading()
+        if reading.peak_mib is not None:
+            self._emit(f"Peak memory: {memformat(reading.peak_mib)}")
 
     def _report(self, index: int, total: int, chars: int, start: float) -> None:
         elapsed = time.monotonic() - start

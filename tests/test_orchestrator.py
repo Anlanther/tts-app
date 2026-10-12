@@ -196,6 +196,37 @@ def test_report_includes_memory_when_aware(tmp_path: Path, monkeypatch: pytest.M
     assert any("mem=321MB" in message for message in messages)
 
 
+def test_reports_peak_memory_at_end_when_aware(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        memory,
+        "read_memory_reading",
+        lambda: memory.MemoryReading(current_mib=321.0, peak_mib=5120.0),
+    )
+    store = JsonJobStore(tmp_path / "jobs")
+    messages: list[str] = []
+    orchestrator = _orchestrator(
+        store, FakeEngine(), tmp_path, memory_aware=True, on_progress=messages.append
+    )
+    document = SourceDocument(title="t", text=TEXT, page_count=1, warnings=[])
+
+    orchestrator.run(document, tmp_path / "out.mp3", "txt")
+
+    assert any("Peak memory: 5.0GB" in message for message in messages)
+
+
+def test_no_peak_memory_line_when_not_aware(tmp_path: Path) -> None:
+    store = JsonJobStore(tmp_path / "jobs")
+    messages: list[str] = []
+    orchestrator = _orchestrator(store, FakeEngine(), tmp_path, on_progress=messages.append)
+    document = SourceDocument(title="t", text=TEXT, page_count=1, warnings=[])
+
+    orchestrator.run(document, tmp_path / "out.mp3", "txt")
+
+    assert not any("Peak memory" in message for message in messages)
+
+
 def test_report_omits_memory_when_not_aware(tmp_path: Path) -> None:
     store = JsonJobStore(tmp_path / "jobs")
     messages: list[str] = []

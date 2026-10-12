@@ -142,17 +142,25 @@ as starting points, not guarantees.)
 
 ## Memory monitoring
 
-- `--memory-aware` reports the process's resident memory in the per-chunk
-  progress line under `mem=` (e.g. `mem=412MB`). On macOS this is the current
-  RSS read straight from the kernel (`mach_task_basic_info`); elsewhere it
-  falls back to peak RSS via `resource.getrusage`.
-- `--max-memory-mb 2048` caps resident memory; when the process reaches the
-  limit before a chunk, progress is persisted and the run exits cleanly,
-  mirroring `--max-runtime`.
+- `--memory-aware` reports the process's memory in the per-chunk progress
+  line under `mem=` (e.g. `mem=2.4GB (rss 178MB)`). On macOS the lead figure is
+  the _physical footprint_ -- the same number Activity Monitor's "Memory"
+  column shows -- read from the kernel via `task_info(TASK_VM_INFO)`, with
+  plain RSS shown alongside for context. Elsewhere it falls back to peak RSS via
+  `resource.getrusage`.
+- `--max-memory-mb 2048` caps memory use, measured against the same figure the
+  progress line leads with (footprint on macOS, peak RSS elsewhere); when the
+  process reaches the limit before a chunk, progress is persisted and the run
+  exits cleanly, mirroring `--max-runtime`.
 
 These read the running process directly, so they need no extra dependency or
-privilege. Note that MLX/Metal buffers live in unified memory on Apple Silicon,
-so the figure is indicative rather than exact.
+privilege. Footprint is preferred over RSS because MLX/Metal buffers live in
+unified memory on Apple Silicon: RSS can sit at a few hundred MB while the
+footprint climbs into the gigabytes. Note that the footprint still oscillates as
+macOS compresses pages, so treat both figures as indicative rather than exact.
+When `--memory-aware` is set, the peak footprint is also reported once at the
+end of the run (`Peak memory: 4.9GB`), since the per-chunk figure samples the
+_current_ value and may miss a transient spike.
 
 ## Development
 
