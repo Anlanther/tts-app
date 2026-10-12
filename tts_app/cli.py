@@ -61,6 +61,12 @@ def convert(
         None, "--thermal-aware/--no-thermal-aware", help="Thermal-throttling-aware pacing."
     ),
     max_runtime: str | None = typer.Option(None, "--max-runtime", help="Max runtime, e.g. 2h."),
+    memory_aware: bool | None = typer.Option(
+        None, "--memory-aware/--no-memory-aware", help="Show process memory in progress output."
+    ),
+    max_memory_mb: int | None = typer.Option(
+        None, "--max-memory-mb", help="Abort if process RSS reaches this many MiB."
+    ),
 ) -> None:
     """Convert an input file (or stdin) into a single MP3 audiobook."""
     del resume
@@ -73,6 +79,8 @@ def convert(
         normalize=normalize,
         thermal_aware=thermal_aware,
         max_runtime=max_runtime,
+        memory_aware=memory_aware,
+        max_memory_mb=max_memory_mb,
     )
     orchestrator: Orchestrator | None = None
     try:
@@ -189,6 +197,8 @@ def _settings_from_flags(
     normalize: bool | None,
     thermal_aware: bool | None,
     max_runtime: str | None,
+    memory_aware: bool | None,
+    max_memory_mb: int | None,
 ) -> Settings:
     overrides: dict[str, Any] = {}
     if voice is not None:
@@ -205,6 +215,10 @@ def _settings_from_flags(
         overrides["normalize"] = normalize
     if thermal_aware is not None:
         overrides["thermal_aware"] = thermal_aware
+    if memory_aware is not None:
+        overrides["memory_aware"] = memory_aware
+    if max_memory_mb is not None:
+        overrides["max_memory_mb"] = max_memory_mb
     if max_runtime is not None:
         try:
             overrides["max_runtime"] = parse_duration(max_runtime)
@@ -240,6 +254,8 @@ def _build_orchestrator(settings: Settings) -> Orchestrator:
         thermal_aware=settings.thermal_aware,
         thermal_threshold=settings.thermal_threshold,
         max_runtime=settings.max_runtime,
+        memory_aware=settings.memory_aware,
+        max_memory_mb=settings.max_memory_mb,
     )
     logger = logging_utils.get_logger("orchestrator")
     return Orchestrator(

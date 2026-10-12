@@ -6,8 +6,8 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
-from tts_app.domain.models import MaxRuntimeExceeded
-from tts_app.utils import thermal
+from tts_app.domain.models import MaxMemoryExceeded, MaxRuntimeExceeded
+from tts_app.utils import memory, thermal
 
 
 class Throttle:
@@ -20,6 +20,8 @@ class Throttle:
         thermal_aware: bool = False,
         thermal_threshold: int = 50,
         max_runtime: timedelta | None = None,
+        memory_aware: bool = False,
+        max_memory_mb: int | None = None,
         clock: Callable[[], datetime] | None = None,
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
@@ -27,6 +29,8 @@ class Throttle:
         self.thermal_aware = thermal_aware
         self.thermal_threshold = thermal_threshold
         self.max_runtime = max_runtime
+        self.memory_aware = memory_aware
+        self.max_memory_mb = max_memory_mb
         self._clock = clock or datetime.now
         self._sleeper = sleeper or time.sleep
         self._started_at = self._clock()
@@ -38,6 +42,7 @@ class Throttle:
     def wait(self, chunk_index: int) -> float:
         """Sleep before a chunk (skipping the first); returns the sleep duration."""
         self._check_runtime()
+        self._check_memory()
         duration = self._compute_duration()
         if chunk_index > 0 and duration > 0:
             self._sleeper(duration)
@@ -66,5 +71,15 @@ class Throttle:
         if self._clock() - self._started_at >= self.max_runtime:
             raise MaxRuntimeExceeded(
                 f"Maximum runtime of {self.max_runtime} exceeded. "
-                "Progress saved; resume with `tts resume <job_id>`."
+                "Progress saved; run `tts list-jobs` to find the job id."
+            )
+
+    def _check_memory(self) -> None:
+        if self.max_memory_mb is None:
+            return
+        current = memory.read_memory_reading().current_mib
+        if current is not None and current >= self.max_memory_mb:
+            raise MaxMemoryExceeded(
+                f"Memory use of {current:.0f}MB reached the {self.max_memory_mb}MB limit. "
+                "Progress saved; run `tts list-jobs` to find the job id."
             )

@@ -47,6 +47,10 @@ class MaxRuntimeExceeded(TtsError):
     """The configured maximum runtime was reached."""
 
 
+class MaxMemoryExceeded(TtsError):
+    """The configured memory ceiling was reached."""
+
+
 class ResumeError(TtsError):
     """Job state could not be loaded or resumed."""
 

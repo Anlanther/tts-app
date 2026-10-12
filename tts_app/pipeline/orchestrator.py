@@ -22,7 +22,7 @@ from tts_app.domain.models import (
 )
 from tts_app.domain.ports import AudioMerger, JobStore, TextSplitter, TTSEngine
 from tts_app.pipeline.throttle import Throttle
-from tts_app.utils import thermal
+from tts_app.utils import memory, thermal
 
 
 @dataclass
@@ -185,9 +185,11 @@ class Orchestrator:
         thermal_str = (
             thermal.read_thermal_reading().label() if self.throttle.thermal_aware else "n/a"
         )
+        memory_str = memory.read_memory_reading().label() if self.throttle.memory_aware else "n/a"
         message = (
             f"chunk {done}/{total} | chars={chars} | "
-            f"elapsed={elapsed:.1f}s | eta={eta:.1f}s | thermal={thermal_str}"
+            f"elapsed={elapsed:.1f}s | eta={eta:.1f}s | "
+            f"thermal={thermal_str} | mem={memory_str}"
         )
         self._emit(message)
 

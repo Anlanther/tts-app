@@ -86,6 +86,7 @@ tts convert INPUT [-o OUT.mp3] [--voice NAME] [--lang-code CODE] [--chunk-chars 
                   [--sleep 2.0] [--retries 2] [--resume] [--no-normalize]
                   [--pdf-password PW] [--format {txt,md,pdf}]
                   [--thermal-aware] [--max-runtime 2h]
+                  [--memory-aware] [--max-memory-mb 2048]
 tts resume JOB_ID
 tts list-jobs
 tts clean [--older-than 7d]
@@ -139,6 +140,20 @@ surface. On a warm lap or in a hot room, raise `--sleep` to `3.0s` or enable
 `--thermal-aware`. (Your mileage will vary by ambient temperature; treat these
 as starting points, not guarantees.)
 
+## Memory monitoring
+
+- `--memory-aware` reports the process's resident memory in the per-chunk
+  progress line under `mem=` (e.g. `mem=412MB`). On macOS this is the current
+  RSS read straight from the kernel (`mach_task_basic_info`); elsewhere it
+  falls back to peak RSS via `resource.getrusage`.
+- `--max-memory-mb 2048` caps resident memory; when the process reaches the
+  limit before a chunk, progress is persisted and the run exits cleanly,
+  mirroring `--max-runtime`.
+
+These read the running process directly, so they need no extra dependency or
+privilege. Note that MLX/Metal buffers live in unified memory on Apple Silicon,
+so the figure is indicative rather than exact.
+
 ## Development
 
 ```sh
@@ -170,6 +185,7 @@ tts_app/
   utils/
     logging.py
     thermal.py
+    memory.py
 ```
 
 The orchestrator depends only on the domain `Protocol`s; concrete adapters are

@@ -20,6 +20,7 @@ from tts_app.domain.models import (
 )
 from tts_app.pipeline.orchestrator import Orchestrator
 from tts_app.pipeline.throttle import Throttle
+from tts_app.utils import memory
 
 VOICE = "bm_daniel"
 CONFIG_HASH = "testcfg"
@@ -36,13 +37,14 @@ def _orchestrator(
     tmp_path: Path,
     retries: int = 0,
     on_progress: Callable[[str], None] | None = None,
+    memory_aware: bool = False,
 ) -> Orchestrator:
     return Orchestrator(
         engine=engine,
         splitter=_splitter(),
         merger=FakeMerger(),
         store=store,
-        throttle=Throttle(base_sleep=0.0, sleeper=lambda _s: None),
+        throttle=Throttle(base_sleep=0.0, sleeper=lambda _s: None, memory_aware=memory_aware),
         voice=VOICE,
         config_hash=CONFIG_HASH,
         state_dir=tmp_path / "state",
@@ -176,6 +178,33 @@ def test_resume_reports_stored_job_id(tmp_path: Path) -> None:
     assert messages[0].startswith(f"Job {job_id} ")
     assert "resumed=True" in messages[0]
     assert result.job_id == job_id
+
+
+def test_report_includes_memory_when_aware(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        memory, "read_memory_reading", lambda: memory.MemoryReading(current_mib=321.0)
+    )
+    store = JsonJobStore(tmp_path / "jobs")
+    messages: list[str] = []
+    orchestrator = _orchestrator(
+        store, FakeEngine(), tmp_path, memory_aware=True, on_progress=messages.append
+    )
+    document = SourceDocument(title="t", text=TEXT, page_count=1, warnings=[])
+
+    orchestrator.run(document, tmp_path / "out.mp3", "txt")
+
+    assert any("mem=321MB" in message for message in messages)
+
+
+def test_report_omits_memory_when_not_aware(tmp_path: Path) -> None:
+    store = JsonJobStore(tmp_path / "jobs")
+    messages: list[str] = []
+    orchestrator = _orchestrator(store, FakeEngine(), tmp_path, on_progress=messages.append)
+    document = SourceDocument(title="t", text=TEXT, page_count=1, warnings=[])
+
+    orchestrator.run(document, tmp_path / "out.mp3", "txt")
+
+    assert any("mem=n/a" in message for message in messages)
 
 
 def test_exhausted_retries_raises_and_persists(tmp_path: Path) -> None:

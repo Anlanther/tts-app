@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     model_path: str = "mlx-community/Kokoro-82M-bf16"
     voice: str = "bm_daniel"
     lang_code: str = "b"
-    speed: float = 1.0
+    speed: float = 2.0
     sample_rate: int = 24000
 
     # Chunking
@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     thermal_aware: bool = False
     max_runtime: timedelta | None = None
     thermal_threshold: int = 50
+
+    # Memory monitoring
+    memory_aware: bool = False
+    max_memory_mb: int | None = None
 
     # Retries
     retries: int = 2

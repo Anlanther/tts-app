@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from tts_app.domain.models import MaxMemoryExceeded
 from tts_app.pipeline.throttle import Throttle
-from tts_app.utils import thermal
+from tts_app.utils import memory, thermal
 
 
 def test_first_chunk_does_not_sleep() -> None:
@@ -54,3 +55,29 @@ def test_not_thermal_aware_ignores_thermals(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(thermal, "read_cpu_speed_limit", _fail)
     throttle = Throttle(base_sleep=2.0, thermal_aware=False, sleeper=lambda _s: None)
     assert throttle.wait(1) == 2.0
+
+
+def test_memory_limit_raises_when_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        memory, "read_memory_reading", lambda: memory.MemoryReading(current_mib=2048.0)
+    )
+    throttle = Throttle(base_sleep=0.0, max_memory_mb=1024, sleeper=lambda _s: None)
+    with pytest.raises(MaxMemoryExceeded):
+        throttle.wait(1)
+
+
+def test_memory_limit_ignored_below_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        memory, "read_memory_reading", lambda: memory.MemoryReading(current_mib=512.0)
+    )
+    throttle = Throttle(base_sleep=0.0, max_memory_mb=1024, sleeper=lambda _s: None)
+    assert throttle.wait(1) == 0.0
+
+
+def test_no_memory_limit_skips_reading(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fail() -> None:
+        raise AssertionError("memory must not be read without a limit")
+
+    monkeypatch.setattr(memory, "read_memory_reading", _fail)
+    throttle = Throttle(base_sleep=0.0, sleeper=lambda _s: None)
+    assert throttle.wait(1) == 0.0
