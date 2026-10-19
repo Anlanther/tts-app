@@ -12,19 +12,15 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# Default chunk-size targets (characters), shared by every layer.
+DEFAULT_TARGET_CHARS = 1000
+DEFAULT_MAX_CHARS = 1500
+DEFAULT_MIN_CHARS = 500
+
 _SENTINEL = "\x00"
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _FENCE_TOKEN_RE = re.compile(r"\x01F(\d+)E\x01")
 _CLAUSE_RE = re.compile(r"(?<=[,;:，；：])\s+")
-
-
-@dataclass(frozen=True)
-class ChunkingConfig:
-    """Chunk-size targets (characters)."""
-
-    target_chars: int = 1000
-    max_chars: int = 1500
-    min_chars: int = 500
 
 
 @dataclass(frozen=True)
@@ -55,9 +51,9 @@ def split_into_units(text: str) -> list[_Unit]:
 def chunk_text(
     text: str,
     *,
-    target_chars: int = 1000,
-    max_chars: int = 1500,
-    min_chars: int = 500,
+    target_chars: int = DEFAULT_TARGET_CHARS,
+    max_chars: int = DEFAULT_MAX_CHARS,
+    min_chars: int = DEFAULT_MIN_CHARS,
     hard_breaks: Sequence[int] = (),
 ) -> list[str]:
     """Split ``text`` into chunks, respecting ``hard_breaks`` (char offsets)."""

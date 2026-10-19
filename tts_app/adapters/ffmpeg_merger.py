@@ -61,17 +61,29 @@ class FfmpegMerger:
                 "-i",
                 str(concat_file),
             ]
-            if self.normalize:
-                command += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
+            command += self._audio_filters()
             command += ["-c:a", "libmp3lame", "-b:a", self.bitrate, str(out_path)]
             result = subprocess.run(command, capture_output=True, text=True)
             if result.returncode != 0:
-                detail = (result.stderr or "").strip()[:500]
+                detail = _ffmpeg_error_detail(result.stderr)
                 raise MergeError(f"ffmpeg concat failed (exit {result.returncode}): {detail}")
         finally:
             concat_file.unlink(missing_ok=True)
             if silence is not None:
                 silence.unlink(missing_ok=True)
+
+    def _audio_filters(self) -> list[str]:
+        """Build the audio filter chain, if any.
+
+        When normalising, an explicit integer-format conversion is inserted after
+        ``loudnorm``. Without it, ffmpeg's ``libmp3lame`` encoder can abort with an
+        assertion in ``psymodel.c`` (``el >= 0``) when the input contains silent
+        frames -- as the inter-chunk silence does -- because it receives float
+        samples and computes a negative energy for digital silence.
+        """
+        if not self.normalize:
+            return []
+        return ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11,aformat=sample_fmts=s16"]
 
     def _write_concat_list(
         self, wav_paths: Sequence[Path], silence: Path | None, concat_file: Path
@@ -101,6 +113,23 @@ class FfmpegMerger:
         ]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
-            detail = (result.stderr or "").strip()[:300]
+            detail = _ffmpeg_error_detail(result.stderr, limit=300)
             raise MergeError(f"ffmpeg silence generation failed: {detail}")
         return path
+
+
+def _ffmpeg_error_detail(stderr: str | None, *, limit: int = 1200) -> str:
+    """Summarise ffmpeg stderr for an error message without dropping the cause.
+
+    ffmpeg prints its banner and stream mapping before the actual failure, so a
+    naive head-truncation keeps only the boilerplate. Prefer the lines that name
+    the failure (assertions, errors), then fall back to the tail.
+    """
+    text = (stderr or "").strip()
+    if not text:
+        return "(no stderr)"
+    lines = text.splitlines()
+    markers = ("assertion", "abort", "error", "failed", "invalid", "nan", "inf")
+    cause = [line for line in lines if any(m in line.lower() for m in markers)]
+    detail = "\n".join(cause) if cause else "\n".join(lines[-3:])
+    return detail[:limit]

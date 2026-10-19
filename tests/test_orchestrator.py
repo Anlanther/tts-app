@@ -15,6 +15,7 @@ from tts_app.domain.models import (
     SourceDocument,
     SynthesisError,
     SynthesisJob,
+    TtsError,
     build_job_id,
     hash_text,
 )
@@ -236,6 +237,72 @@ def test_report_omits_memory_when_not_aware(tmp_path: Path) -> None:
     orchestrator.run(document, tmp_path / "out.mp3", "txt")
 
     assert any("mem=n/a" in message for message in messages)
+
+
+def test_stale_completed_without_wavs_is_resynthesized(tmp_path: Path) -> None:
+    # Regression: a job whose JSON claims completed chunks but whose temp WAVs
+    # are gone (temp dir cleaned/crashed) must re-synthesize, not merge against
+    # missing files.
+    chunks = _splitter().split(TEXT)
+    content_hash = hash_text(TEXT)
+    job_id = build_job_id(content_hash, VOICE, CONFIG_HASH)
+    temp_dir = tmp_path / "state" / "tmp" / job_id
+    temp_dir.mkdir(parents=True)  # deliberately empty: no WAVs on disk
+
+    store = JsonJobStore(tmp_path / "jobs")
+    store.save(
+        SynthesisJob(
+            job_id=job_id,
+            content_hash=content_hash,
+            voice=VOICE,
+            config_hash=CONFIG_HASH,
+            source_format="txt",
+            title="t",
+            chunks=chunks,
+            completed=list(range(len(chunks))),  # claims everything is done
+            status=JobStatus.RUNNING,
+            output_path=str(tmp_path / "out.mp3"),
+            temp_dir=str(temp_dir),
+            created_at="",
+            updated_at="",
+            warnings=[],
+        )
+    )
+
+    engine = FakeEngine()
+    orchestrator = _orchestrator(store, engine, tmp_path)
+    document = SourceDocument(title="t", text=TEXT, page_count=1, warnings=[])
+    result = orchestrator.run(document, tmp_path / "out.mp3", "txt")
+
+    assert result.complete
+    assert [text for text, _voice, _path in engine.calls] == chunks
+
+
+def test_missing_wavs_raise_clear_error(tmp_path: Path) -> None:
+    orchestrator = _orchestrator(JsonJobStore(tmp_path / "jobs"), FakeEngine(), tmp_path)
+    temp_dir = tmp_path / "state" / "tmp" / "missing"
+    temp_dir.mkdir(parents=True)
+    job = SynthesisJob(
+        job_id="missing",
+        content_hash="h",
+        voice=VOICE,
+        config_hash=CONFIG_HASH,
+        source_format="txt",
+        title="t",
+        chunks=["a"],
+        completed=[],
+        status=JobStatus.RUNNING,
+        output_path=str(tmp_path / "out.mp3"),
+        temp_dir=str(temp_dir),
+        created_at="",
+        updated_at="",
+        warnings=[],
+    )
+
+    with pytest.raises(TtsError) as excinfo:
+        orchestrator._merge_and_finish(job, temp_dir, [0], tmp_path / "out.mp3")
+    assert "missing from" in str(excinfo.value)
+    assert "chunk_000000.wav" in str(excinfo.value)
 
 
 def test_exhausted_retries_raises_and_persists(tmp_path: Path) -> None:

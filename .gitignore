@@ -10,5 +10,7 @@ build/
 .uv-cache/
 .uv-python/
 .devcontainer/
-
 .DS_Store
+
+outputs/
+inputs/

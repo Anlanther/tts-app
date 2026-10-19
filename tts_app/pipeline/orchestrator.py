@@ -119,6 +119,15 @@ class Orchestrator:
         pending = [i for i in range(len(job.chunks)) if i not in set(completed)]
         job.completed = sorted(completed)
 
+        # A job may claim completed chunks whose WAVs are gone (temp dir cleaned,
+        # crashed mid-write, machine restarted). Re-synthesize anything not on disk
+        # rather than merging against missing files.
+        if pending and was_resumed:
+            self._log(
+                f"{len(completed)} of {job.total} chunk(s) already on disk; "
+                f"re-synthesizing {len(pending)} missing chunk(s)."
+            )
+
         self._report_start(job, output_path, was_resumed)
 
         if not pending:
@@ -169,6 +178,13 @@ class Orchestrator:
         self, job: SynthesisJob, temp_dir: Path, completed: list[int], output_path: Path
     ) -> None:
         wav_paths = [self._wav_path(temp_dir, i) for i in completed]
+        missing = [path for path in wav_paths if not path.exists()]
+        if missing:
+            raise TtsError(
+                f"Cannot merge: {len(missing)} of {len(wav_paths)} chunk file(s) are "
+                f"missing from {temp_dir} (e.g. {missing[0].name}). The job state is "
+                f"inconsistent; re-run to re-synthesize them."
+            )
         self._log(f"Merging {len(wav_paths)} chunks into {output_path}.")
         self.merger.merge(wav_paths, output_path)
         shutil.rmtree(temp_dir, ignore_errors=True)

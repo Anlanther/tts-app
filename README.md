@@ -79,6 +79,23 @@ normalize = true
 Any setting can be overridden per-invocation, e.g. `TTS_VOICE=am_michael
 uv run tts convert book.pdf`.
 
+### Chunking
+
+Text is split into sentence-aware chunks before synthesis. Three character
+counts control the split, and they share a single set of defaults
+(`chunk_target_chars=1000`, `chunk_max_chars=1500`, `chunk_min_chars=500`):
+
+- `chunk_target_chars` — the size a chunk aims for; `--chunk-chars` sets it from
+  the CLI.
+- `chunk_max_chars` — the hard ceiling a chunk never exceeds (except for an
+  un-splittable single unit such as a huge code block).
+- `chunk_min_chars` — the floor below which a chunk is not closed at a paragraph
+  boundary.
+
+`tts inspect` and `tts convert` derive their splitter from the same settings, so
+`tts inspect --chunk-chars N` reports exactly the chunk count that
+`tts convert --chunk-chars N` will synthesize.
+
 ## CLI reference
 
 ```text
@@ -90,7 +107,7 @@ tts convert INPUT [-o OUT.mp3] [--voice NAME] [--lang-code CODE] [--chunk-chars 
 tts resume JOB_ID
 tts list-jobs
 tts clean [--older-than 7d]
-tts inspect INPUT          # dry-run: extractor, char count, chunk count, warnings
+tts inspect INPUT [--chunk-chars 1200]   # dry-run: extractor, char count, chunk count, warnings
 ```
 
 ## PDF caveats

@@ -163,18 +163,14 @@ def inspect(
     chunk_chars: int | None = typer.Option(None, "--chunk-chars", help="Target chunk size."),
 ) -> None:
     """Dry-run: show extractor, char count, chunk count, and warnings."""
-    settings = load_settings()
-    target = settings.chunk_target_chars if chunk_chars is None else chunk_chars
+    overrides = {} if chunk_chars is None else {"chunk_target_chars": chunk_chars}
+    settings = load_settings(cli_overrides=overrides)
     try:
         document = _load_document(input, fmt, pdf_password)
     except TtsError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from None
-    splitter = SentenceSplitter(
-        target_chars=target,
-        max_chars=max(target + 500, settings.chunk_max_chars),
-        min_chars=settings.chunk_min_chars,
-    )
+    splitter = _build_splitter(settings)
     chunks = splitter.split(document.text, document.chapter_breaks or ())
     typer.echo(f"Title:      {document.title}")
     typer.echo(f"Format:     {_detect_format(input, fmt)}")
@@ -228,6 +224,15 @@ def _settings_from_flags(
     return load_settings(cli_overrides=overrides)
 
 
+def _build_splitter(settings: Settings) -> SentenceSplitter:
+    """Build the text splitter from settings so inspect and convert agree."""
+    return SentenceSplitter(
+        target_chars=settings.chunk_target_chars,
+        max_chars=settings.chunk_max_chars,
+        min_chars=settings.chunk_min_chars,
+    )
+
+
 def _build_orchestrator(settings: Settings) -> Orchestrator:
     merger = FfmpegMerger(
         bitrate=settings.mp3_bitrate,
@@ -243,11 +248,7 @@ def _build_orchestrator(settings: Settings) -> Orchestrator:
         lang_code=settings.lang_code,
         speed=settings.speed,
     )
-    splitter = SentenceSplitter(
-        target_chars=settings.chunk_target_chars,
-        max_chars=settings.chunk_max_chars,
-        min_chars=settings.chunk_min_chars,
-    )
+    splitter = _build_splitter(settings)
     store = JsonJobStore(settings.state_dir / "jobs")
     throttle = Throttle(
         base_sleep=settings.sleep_between_chunks,

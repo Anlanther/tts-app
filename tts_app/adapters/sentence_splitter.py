@@ -4,15 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from tts_app.pipeline.chunker import chunk_text
+from tts_app.pipeline.chunker import (
+    DEFAULT_MAX_CHARS,
+    DEFAULT_MIN_CHARS,
+    DEFAULT_TARGET_CHARS,
+    chunk_text,
+)
 
 
 class SentenceSplitter:
     def __init__(
         self,
-        target_chars: int = 1000,
-        max_chars: int = 1500,
-        min_chars: int = 500,
+        target_chars: int = DEFAULT_TARGET_CHARS,
+        max_chars: int = DEFAULT_MAX_CHARS,
+        min_chars: int = DEFAULT_MIN_CHARS,
     ) -> None:
         self.target_chars = target_chars
         self.max_chars = max_chars

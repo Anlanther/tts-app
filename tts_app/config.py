@@ -15,6 +15,12 @@ from typing import Any
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tts_app.pipeline.chunker import (
+    DEFAULT_MAX_CHARS,
+    DEFAULT_MIN_CHARS,
+    DEFAULT_TARGET_CHARS,
+)
+
 _CONFIG_FILE = Path.home() / ".config" / "tts_app" / "config.toml"
 _STATE_DIR = Path.home() / ".local" / "state" / "tts_app"
 
@@ -62,13 +68,13 @@ class Settings(BaseSettings):
     model_path: str = "mlx-community/Kokoro-82M-bf16"
     voice: str = "bm_daniel"
     lang_code: str = "b"
-    speed: float = 2.0
+    speed: float = 1.5
     sample_rate: int = 24000
 
     # Chunking
-    chunk_target_chars: int = 1000
-    chunk_max_chars: int = 1500
-    chunk_min_chars: int = 500
+    chunk_target_chars: int = DEFAULT_TARGET_CHARS
+    chunk_max_chars: int = DEFAULT_MAX_CHARS
+    chunk_min_chars: int = DEFAULT_MIN_CHARS
 
     # Synthesis pacing / thermal
     sleep_between_chunks: float = 2.0
