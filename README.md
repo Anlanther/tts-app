@@ -74,10 +74,56 @@ lang_code = "b"
 sleep_between_chunks = 3.0
 mp3_bitrate = "160k"
 normalize = true
+lexicon_path = "~/.config/tts_app/lexicon.txt"
 ```
 
 Any setting can be overridden per-invocation, e.g. `TTS_VOICE=am_michael
 uv run tts convert book.pdf`.
+
+### Pronunciation lexicon
+
+Kokoro's G2P model has no lexicon hook, so `tts` corrects a mispronounced word
+by rewriting it to a respelling the voice reads correctly. Keep the entries in
+a plain-text file and point at it with `lexicon_path` (or `TTS_LEXICON_PATH`, or
+`--lexicon FILE` on a single run):
+
+```toml
+lexicon_path = "~/.config/tts_app/lexicon.txt"
+```
+
+```text
+# TERM[, TERM...] = HOW TO SAY IT
+Kubernetes = koober nett ease
+Dr., Dr = doctor
+```
+
+Rules:
+
+- Matching is case-sensitive and whole-term: `cat` will not match inside
+  `concatenate`, but it will match in `(cat).`. Add a separate entry per case
+  (`LLC` and `Llc`) if you need both.
+- A comma on the left lists alternate spellings that all say the same thing.
+- Entries apply in file order, so an earlier entry rewrites the text a later
+  entry sees. Put the most specific terms first.
+- A malformed entry is reported as `path:line`, never skipped silently.
+
+Use `tts say` to iterate on a respelling without converting the whole document:
+
+```sh
+uv run tts say "Kubernetes"                # what will the engine actually say?
+uv run tts say "koober nett ease"          # audition a candidate directly
+uv run tts say "nginx" --lexicon v2.txt    # try a different lexicon file
+uv run tts say "Dr. Smith" --no-lexicon    # hear the untouched text
+```
+
+`tts say` prints the text it sent to the engine (`Spoken: ...`), so an entry
+that failed to match is immediately obvious. It writes a reusable preview WAV
+to `~/.local/state/tts_app/preview/say.wav` (override with `-o FILE`). Playback
+uses macOS `afplay`; `--no-play` writes the WAV without playing it.
+
+The lexicon is applied before the text is hashed and chunked, so editing it
+changes the job id and re-synthesizes the affected text. A correction to a book
+that is already underway restarts the whole document rather than resuming it.
 
 ### Chunking
 
@@ -101,13 +147,17 @@ counts control the split, and they share a single set of defaults
 ```text
 tts convert INPUT [-o OUT.mp3] [--voice NAME] [--lang-code CODE] [--chunk-chars 1200]
                   [--sleep 2.0] [--retries 2] [--resume] [--no-normalize]
-                  [--pdf-password PW] [--format {txt,md,pdf}]
+                  [--pdf-password PW] [--format {txt,md,pdf}] [--lexicon FILE]
                   [--thermal-aware] [--max-runtime 2h]
                   [--memory-aware] [--max-memory-mb 2048]
 tts resume JOB_ID
 tts list-jobs
 tts clean [--older-than 7d]
-tts inspect INPUT [--chunk-chars 1200]   # dry-run: extractor, char count, chunk count, warnings
+tts inspect INPUT [--chunk-chars 1200] [--lexicon FILE]
+                                         # dry-run: extractor, char count, chunk count, warnings
+tts say TEXT [--voice NAME] [--lang-code CODE] [--lexicon FILE] [--no-lexicon]
+             [-o OUT.wav] [--play/--no-play] [-n N]
+                                         # audition a word or respelling
 ```
 
 ## PDF caveats
@@ -197,11 +247,13 @@ tts_app/
   domain/
     models.py                # dataclasses + errors
     ports.py                 # Protocols: TTSEngine, TextExtractor, TextSplitter, ...
+    pronunciation.py         # lexicon parsing + whole-term rewrite rules
   adapters/
     kokoro_engine.py         # mlx-audio Kokoro wrapper
     sentence_splitter.py     # TextSplitter impl
     ffmpeg_merger.py         # AudioMerger impl (concat -> mp3)
     json_job_store.py        # JobStore impl (resume)
+    lexicon_file.py          # loads TERM = SPOKEN lexicon files
     extractors/              # txt / md / pdf, dispatched by extension
   pipeline/
     orchestrator.py          # drives split -> synth -> merge (ports only)
@@ -211,6 +263,7 @@ tts_app/
     logging.py
     thermal.py
     memory.py
+    playback.py              # afplay preview for `tts say`
 ```
 
 The orchestrator depends only on the domain `Protocol`s; concrete adapters are

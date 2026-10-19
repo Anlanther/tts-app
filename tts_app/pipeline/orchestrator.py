@@ -21,6 +21,7 @@ from tts_app.domain.models import (
     hash_text,
 )
 from tts_app.domain.ports import AudioMerger, JobStore, TextSplitter, TTSEngine
+from tts_app.domain.pronunciation import Pronunciation, apply_lexicon
 from tts_app.pipeline.throttle import Throttle
 from tts_app.utils import memory, thermal
 from tts_app.utils.memory import format_mib as memformat
@@ -52,6 +53,7 @@ class Orchestrator:
         state_dir: Path,
         retries: int = 2,
         retry_backoff: float = 2.0,
+        lexicon: list[Pronunciation] | None = None,
         on_progress: Callable[[str], None] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -65,13 +67,20 @@ class Orchestrator:
         self.state_dir = state_dir
         self.retries = retries
         self.retry_backoff = retry_backoff
+        self.lexicon = lexicon or []
         self.on_progress = on_progress
         self.logger = logger
         self.current_job_id: str | None = None
 
     def run(self, document: SourceDocument, output_path: Path, source_format: str) -> RunResult:
-        content_hash = hash_text(document.text)
-        chunks = self.splitter.split(document.text, document.chapter_breaks or ())
+        # Normalize pronunciation before hashing and chunking: the job id then
+        # covers the spoken text, so editing the lexicon can never reuse audio
+        # synthesized from the old respelling.
+        text = apply_lexicon(document.text, self.lexicon)
+        if self.lexicon and text != document.text:
+            self._log(f"Applied {len(self.lexicon)} pronunciation override(s) from the lexicon.")
+        content_hash = hash_text(text)
+        chunks = self.splitter.split(text, document.chapter_breaks or ())
         if not chunks:
             raise TtsError("No text to synthesize; the document is empty.")
         job_id = build_job_id(content_hash, self.voice, self.config_hash)

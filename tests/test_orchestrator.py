@@ -19,6 +19,7 @@ from tts_app.domain.models import (
     build_job_id,
     hash_text,
 )
+from tts_app.domain.pronunciation import Pronunciation
 from tts_app.pipeline.orchestrator import Orchestrator
 from tts_app.pipeline.throttle import Throttle
 from tts_app.utils import memory
@@ -39,6 +40,7 @@ def _orchestrator(
     retries: int = 0,
     on_progress: Callable[[str], None] | None = None,
     memory_aware: bool = False,
+    lexicon: list[Pronunciation] | None = None,
 ) -> Orchestrator:
     return Orchestrator(
         engine=engine,
@@ -51,6 +53,7 @@ def _orchestrator(
         state_dir=tmp_path / "state",
         retries=retries,
         retry_backoff=0.0,
+        lexicon=lexicon,
         on_progress=on_progress,
     )
 
@@ -351,3 +354,18 @@ def test_resume_uses_job_stored_voice(tmp_path: Path) -> None:
 
     assert result.complete
     assert all(voice == "stored_voice" for _text, voice, _path in engine.calls)
+
+
+def test_lexicon_rewrites_chunks_and_changes_job_id(tmp_path: Path) -> None:
+    # The lexicon is applied before hashing, so the job id reflects the spoken
+    # text: adding an entry can never resume audio made from the old respelling.
+    store = JsonJobStore(tmp_path / "jobs")
+    engine = FakeEngine()
+    lexicon = [Pronunciation(spoken="alfa", written=("Alpha",))]
+    orchestrator = _orchestrator(store, engine, tmp_path, lexicon=lexicon)
+
+    document = SourceDocument(title="t", text="Alpha beta.", page_count=1)
+    orchestrator.run(document, tmp_path / "out.mp3", "txt")
+
+    assert [text for text, _voice, _path in engine.calls] == ["alfa beta."]
+    assert orchestrator.current_job_id == build_job_id(hash_text("alfa beta."), VOICE, CONFIG_HASH)

@@ -15,12 +15,15 @@ from tts_app.adapters.extractors import extractor_for
 from tts_app.adapters.ffmpeg_merger import FfmpegMerger
 from tts_app.adapters.json_job_store import JsonJobStore
 from tts_app.adapters.kokoro_engine import KokoroEngine
+from tts_app.adapters.lexicon_file import load_lexicon
 from tts_app.adapters.sentence_splitter import SentenceSplitter
 from tts_app.config import Settings, load_settings, parse_duration
 from tts_app.domain.models import SourceDocument, TtsError
+from tts_app.domain.pronunciation import Pronunciation, apply_lexicon
 from tts_app.pipeline.orchestrator import Orchestrator, RunResult
 from tts_app.pipeline.throttle import Throttle
 from tts_app.utils import logging as logging_utils
+from tts_app.utils import playback
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -57,6 +60,9 @@ def convert(
     ),
     pdf_password: str | None = typer.Option(None, "--pdf-password", help="Encrypted PDF password."),
     fmt: str | None = typer.Option(None, "--format", help="Force format: txt, md, or pdf."),
+    lexicon: Path | None = typer.Option(
+        None, "--lexicon", help="Pronunciation lexicon to apply before synthesis."
+    ),
     thermal_aware: bool | None = typer.Option(
         None, "--thermal-aware/--no-thermal-aware", help="Thermal-throttling-aware pacing."
     ),
@@ -81,6 +87,7 @@ def convert(
         max_runtime=max_runtime,
         memory_aware=memory_aware,
         max_memory_mb=max_memory_mb,
+        lexicon=lexicon,
     )
     orchestrator: Orchestrator | None = None
     try:
@@ -107,7 +114,7 @@ def resume(job_id: str = typer.Argument(..., help="Job id to resume.")) -> None:
     """Resume an interrupted or incomplete job."""
     settings = load_settings()
     try:
-        orchestrator = _build_orchestrator(settings)
+        orchestrator = _build_orchestrator(settings, use_lexicon=False)
         result = orchestrator.resume(job_id)
         _print_result(result)
     except KeyboardInterrupt:
@@ -161,26 +168,94 @@ def inspect(
     fmt: str | None = typer.Option(None, "--format", help="Force format."),
     pdf_password: str | None = typer.Option(None, "--pdf-password", help="Encrypted PDF password."),
     chunk_chars: int | None = typer.Option(None, "--chunk-chars", help="Target chunk size."),
+    lexicon: Path | None = typer.Option(
+        None, "--lexicon", help="Pronunciation lexicon to apply before counting chunks."
+    ),
 ) -> None:
     """Dry-run: show extractor, char count, chunk count, and warnings."""
-    overrides = {} if chunk_chars is None else {"chunk_target_chars": chunk_chars}
+    overrides: dict[str, Any] = {}
+    if chunk_chars is not None:
+        overrides["chunk_target_chars"] = chunk_chars
+    if lexicon is not None:
+        overrides["lexicon_path"] = lexicon
     settings = load_settings(cli_overrides=overrides)
     try:
         document = _load_document(input, fmt, pdf_password)
+        entries = _load_lexicon(settings)
     except TtsError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from None
+    text = apply_lexicon(document.text, entries)
     splitter = _build_splitter(settings)
-    chunks = splitter.split(document.text, document.chapter_breaks or ())
+    chunks = splitter.split(text, document.chapter_breaks or ())
     typer.echo(f"Title:      {document.title}")
     typer.echo(f"Format:     {_detect_format(input, fmt)}")
     typer.echo(f"Pages:      {document.page_count}")
-    typer.echo(f"Characters: {len(document.text)}")
+    typer.echo(f"Characters: {len(text)}")
     typer.echo(f"Chunks:     {len(chunks)}")
+    if entries:
+        typer.echo(f"Lexicon:    {len(entries)} override(s) applied")
     if document.chapter_breaks:
         typer.echo(f"Chapters:   {len(document.chapter_breaks)}")
     for warning in document.warnings:
         typer.echo(f"Warning:    {warning}")
+
+
+@app.command()
+def say(
+    text: str = typer.Argument(..., help="Text to speak, e.g. 'Kubernetes'."),
+    voice: str | None = typer.Option(None, "--voice", help="Voice name to use (e.g. bm_daniel)."),
+    lang_code: str | None = typer.Option(None, "--lang-code", help="Kokoro language code."),
+    lexicon: Path | None = typer.Option(None, "--lexicon", help="Pronunciation lexicon to apply."),
+    no_lexicon: bool = typer.Option(
+        False, "--no-lexicon", help="Ignore the configured lexicon (hear the raw text)."
+    ),
+    output: Path | None = typer.Option(None, "-o", "--output", help="Keep the WAV here."),
+    play_audio: bool = typer.Option(True, "--play/--no-play", help="Play the result."),
+    repeat: int = typer.Option(1, "-n", "--repeat", help="Speak it this many times."),
+) -> None:
+    """Audition a voice or a lexicon respelling on a short phrase."""
+    if repeat < 1:
+        typer.echo("Error: --repeat must be at least 1.", err=True)
+        raise typer.Exit(2)
+    if play_audio and not playback.supports_playback():
+        typer.echo("Error: built-in playback is macOS-only; pass --no-play.", err=True)
+        raise typer.Exit(2)
+
+    settings = _settings_from_flags(
+        voice=voice,
+        lang_code=lang_code,
+        chunk_chars=None,
+        sleep=None,
+        retries=None,
+        normalize=False,
+        thermal_aware=None,
+        max_runtime=None,
+        memory_aware=None,
+        max_memory_mb=None,
+        lexicon=lexicon,
+        disable_lexicon=no_lexicon,
+    )
+    try:
+        spoken = apply_lexicon(text, _load_lexicon(settings))
+        engine = KokoroEngine(
+            model_path=settings.model_path,
+            sample_rate=settings.sample_rate,
+            lang_code=settings.lang_code,
+            speed=settings.speed,
+        )
+        target = _say_output_path(settings, output)
+        typer.echo(f"Spoken: {spoken}")
+        typer.echo(f"WAV:    {target}")
+        # Repeating only makes sense when the result is played; without
+        # playback it would rewrite the same file for no reason.
+        for _ in range(repeat if play_audio else 1):
+            engine.synthesize(spoken, settings.voice, target)
+            if play_audio:
+                playback.play(target)
+    except TtsError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
 
 
 def _settings_from_flags(
@@ -195,8 +270,14 @@ def _settings_from_flags(
     max_runtime: str | None,
     memory_aware: bool | None,
     max_memory_mb: int | None,
+    lexicon: Path | None = None,
+    disable_lexicon: bool = False,
 ) -> Settings:
     overrides: dict[str, Any] = {}
+    if disable_lexicon:
+        overrides["lexicon_path"] = None
+    elif lexicon is not None:
+        overrides["lexicon_path"] = lexicon
     if voice is not None:
         overrides["voice"] = voice
     if lang_code is not None:
@@ -224,6 +305,23 @@ def _settings_from_flags(
     return load_settings(cli_overrides=overrides)
 
 
+def _load_lexicon(settings: Settings) -> list[Pronunciation]:
+    """Load the configured pronunciation lexicon, if one is set."""
+    if settings.lexicon_path is None:
+        return []
+    return load_lexicon(settings.lexicon_path)
+
+
+def _say_output_path(settings: Settings, output: Path | None) -> Path:
+    """Resolve where ``say`` writes its preview WAV."""
+    if output is not None:
+        _ensure_writable(output)
+        return output
+    preview_dir = settings.state_dir / "preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    return preview_dir / "say.wav"
+
+
 def _build_splitter(settings: Settings) -> SentenceSplitter:
     """Build the text splitter from settings so inspect and convert agree."""
     return SentenceSplitter(
@@ -233,7 +331,7 @@ def _build_splitter(settings: Settings) -> SentenceSplitter:
     )
 
 
-def _build_orchestrator(settings: Settings) -> Orchestrator:
+def _build_orchestrator(settings: Settings, *, use_lexicon: bool = True) -> Orchestrator:
     merger = FfmpegMerger(
         bitrate=settings.mp3_bitrate,
         normalize=settings.normalize,
@@ -250,6 +348,9 @@ def _build_orchestrator(settings: Settings) -> Orchestrator:
     )
     splitter = _build_splitter(settings)
     store = JsonJobStore(settings.state_dir / "jobs")
+    # Resume replays persisted chunks, so it must not fail on a lexicon file
+    # that has since been moved or deleted.
+    lexicon = _load_lexicon(settings) if use_lexicon else []
     throttle = Throttle(
         base_sleep=settings.sleep_between_chunks,
         thermal_aware=settings.thermal_aware,
@@ -270,6 +371,7 @@ def _build_orchestrator(settings: Settings) -> Orchestrator:
         state_dir=settings.state_dir,
         retries=settings.retries,
         retry_backoff=settings.retry_backoff,
+        lexicon=lexicon,
         on_progress=lambda message: typer.echo(message),
         logger=logger,
     )

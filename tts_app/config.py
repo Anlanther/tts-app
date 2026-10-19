@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     speed: float = 1.5
     sample_rate: int = 24000
 
+    # Pronunciation
+    lexicon_path: Path | None = None
+
     # Chunking
     chunk_target_chars: int = DEFAULT_TARGET_CHARS
     chunk_max_chars: int = DEFAULT_MAX_CHARS

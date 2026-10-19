@@ -1,0 +1,10 @@
+# Pronunciation lexicon: TERM[, TERM...] = HOW TO SAY IT
+#
+# Point tts at this file with `--lexicon` or `lexicon_path` in config.toml.
+# Matching is case-sensitive and whole-term; entries apply in file order.
+# Iterate on a single word with: uv run tts say "Kubernetes"
+
+Kubernetes = koober nett ease
+nginx = engine ex
+Dr., Dr = doctor
+St., St = saint
